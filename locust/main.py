@@ -518,8 +518,11 @@ def main():
         logger.info("Starting Locust %s" % version)
         main_greenlet.join()
         code = 0
-        if len(runners.locust_runner.errors):
-            code = 1
+        # Klarna hack:
+        # Dont send bad exit code even when there were errors.
+        # Instead we check influx against thresholds set by the user.
+        # if len(runners.locust_runner.errors):
+        #    code = 1
         shutdown(code=code)
     except KeyboardInterrupt as e:
         shutdown(0)
