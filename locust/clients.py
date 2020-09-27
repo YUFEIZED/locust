@@ -2,24 +2,20 @@ import re
 import time
 
 import requests
-import six
 from requests import Request, Response
 from requests.auth import HTTPBasicAuth
-from requests.exceptions import (InvalidSchema, InvalidURL, MissingSchema,
-                                 RequestException)
+from requests.exceptions import InvalidSchema, InvalidURL, MissingSchema, RequestException
 
-from six.moves.urllib.parse import urlparse, urlunparse
+from urllib.parse import urlparse, urlunparse
 
-from . import events
 from .exception import CatchResponseError, ResponseError
 
 absolute_http_url_regexp = re.compile(r"^https?://", re.I)
 
 
 class LocustResponse(Response):
-
     def raise_for_status(self):
-        if hasattr(self, 'error') and self.error:
+        if hasattr(self, "error") and self.error:
             raise self.error
         Response.raise_for_status(self)
 
@@ -35,7 +31,7 @@ class HttpSession(requests.Session):
     the methods for making requests (get, post, delete, put, head, options, patch, request)
     can now take a *url* argument that's only the path part of the URL, in which case the host
     part of the URL will be prepended with the HttpSession.base_url which is normally inherited
-    from a Locust class' host property.
+    from a User class' host property.
 
     Each of the methods for making requests also takes two additional optional arguments which
     are Locust specific and doesn't exist in python-requests. These are:
@@ -47,10 +43,13 @@ class HttpSession(requests.Session):
                            response, even if the response code is ok (2xx). The opposite also works, one can use catch_response to catch a request
                            and then mark it as successful even if the response code was not (i.e 500 or 404).
     """
-    def __init__(self, base_url, *args, **kwargs):
+
+    def __init__(self, base_url, request_success, request_failure, *args, **kwargs):
         super(HttpSession, self).__init__(*args, **kwargs)
 
         self.base_url = base_url
+        self.request_success = request_success
+        self.request_failure = request_failure
 
         # Check for basic authentication
         parsed_url = urlparse(self.base_url)
@@ -60,7 +59,9 @@ class HttpSession(requests.Session):
                 netloc += ":%d" % parsed_url.port
 
             # remove username and password from the base_url
-            self.base_url = urlunparse((parsed_url.scheme, netloc, parsed_url.path, parsed_url.params, parsed_url.query, parsed_url.fragment))
+            self.base_url = urlunparse(
+                (parsed_url.scheme, netloc, parsed_url.path, parsed_url.params, parsed_url.query, parsed_url.fragment)
+            )
             # configure requests to use basic auth
             self.auth = HTTPBasicAuth(parsed_url.username, parsed_url.password)
 
@@ -116,7 +117,6 @@ class HttpSession(requests.Session):
         # record the consumed time
         request_meta["response_time"] = (time.monotonic() - request_meta["start_time"]) * 1000
 
-
         request_meta["name"] = name or (response.history and response.history[0] or response).request.path_url
 
         # get the length of the content, but if the argument stream is set to True, we take
@@ -128,24 +128,35 @@ class HttpSession(requests.Session):
 
         if catch_response:
             response.locust_request_meta = request_meta
-            return ResponseContextManager(response)
+            return ResponseContextManager(
+                response, request_success=self.request_success, request_failure=self.request_failure
+            )
         else:
+            if name:
+                # Since we use the Exception message when grouping failures, in order to not get
+                # multiple failure entries for different URLs for the same name argument, we need
+                # to temporarily override the response.url attribute
+                orig_url = response.url
+                response.url = name
             try:
                 response.raise_for_status()
             except RequestException as e:
-                events.request_failure.fire(
+                self.request_failure.fire(
                     request_type=request_meta["method"],
                     name=request_meta["name"],
                     response_time=request_meta["response_time"],
+                    response_length=request_meta["content_size"],
                     exception=e,
                 )
             else:
-                events.request_success.fire(
+                self.request_success.fire(
                     request_type=request_meta["method"],
                     name=request_meta["name"],
                     response_time=request_meta["response_time"],
                     response_length=request_meta["content_size"],
                 )
+            if name:
+                response.url = orig_url
             return response
 
     def _send_request_safe_mode(self, method, url, **kwargs):
@@ -155,7 +166,7 @@ class HttpSession(requests.Session):
         Safe mode has been removed from requests 1.x.
         """
         try:
-            return requests.Session.request(self, method, url, **kwargs)
+            return super().request(method, url, **kwargs)
         except (MissingSchema, InvalidSchema, InvalidURL):
             raise
         except RequestException as e:
@@ -176,34 +187,60 @@ class ResponseContextManager(LocustResponse):
     :py:meth:`failure <locust.clients.ResponseContextManager.failure>`.
     """
 
-    _is_reported = False
+    _manual_result = None
 
-    def __init__(self, response):
+    def __init__(self, response, request_success, request_failure):
         # copy data from response to this object
         self.__dict__ = response.__dict__
+        self._request_success = request_success
+        self._request_failure = request_failure
 
     def __enter__(self):
         return self
 
     def __exit__(self, exc, value, traceback):
-        if self._is_reported:
+        if self._manual_result is not None:
+            if self._manual_result == True:
+                self._report_success()
+            elif isinstance(self._manual_result, Exception):
+                self._report_failure(self._manual_result)
+
             # if the user has already manually marked this response as failure or success
-            # we can ignore the default haviour of letting the response code determine the outcome
+            # we can ignore the default behaviour of letting the response code determine the outcome
             return exc is None
 
         if exc:
             if isinstance(value, ResponseError):
-                self.failure(value)
+                self._report_failure(value)
             else:
+                # we want other unknown exceptions to be raised
                 return False
         else:
             try:
                 self.raise_for_status()
             except requests.exceptions.RequestException as e:
-                self.failure(e)
+                self._report_failure(e)
             else:
-                self.success()
+                self._report_success()
+
         return True
+
+    def _report_success(self):
+        self._request_success.fire(
+            request_type=self.locust_request_meta["method"],
+            name=self.locust_request_meta["name"],
+            response_time=self.locust_request_meta["response_time"],
+            response_length=self.locust_request_meta["content_size"],
+        )
+
+    def _report_failure(self, exc):
+        self._request_failure.fire(
+            request_type=self.locust_request_meta["method"],
+            name=self.locust_request_meta["name"],
+            response_time=self.locust_request_meta["response_time"],
+            response_length=self.locust_request_meta["content_size"],
+            exception=exc,
+        )
 
     def success(self):
         """
@@ -215,19 +252,13 @@ class ResponseContextManager(LocustResponse):
                 if response.status_code == 404:
                     response.success()
         """
-        events.request_success.fire(
-            request_type=self.locust_request_meta["method"],
-            name=self.locust_request_meta["name"],
-            response_time=self.locust_request_meta["response_time"],
-            response_length=self.locust_request_meta["content_size"],
-        )
-        self._is_reported = True
+        self._manual_result = True
 
     def failure(self, exc):
         """
         Report the response as a failure.
 
-        exc can be either a python exception, or a string in which case it will
+        if exc is anything other than a python exception (like a string) it will
         be wrapped inside a CatchResponseError.
 
         Example::
@@ -236,13 +267,6 @@ class ResponseContextManager(LocustResponse):
                 if response.content == b"":
                     response.failure("No data")
         """
-        if isinstance(exc, six.string_types):
+        if not isinstance(exc, Exception):
             exc = CatchResponseError(exc)
-
-        events.request_failure.fire(
-            request_type=self.locust_request_meta["method"],
-            name=self.locust_request_meta["name"],
-            response_time=self.locust_request_meta["response_time"],
-            exception=exc,
-        )
-        self._is_reported = True
+        self._manual_result = exc

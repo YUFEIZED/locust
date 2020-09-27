@@ -2,8 +2,6 @@
 Locust Documentation
 =====================
 
-.. rubric:: Everything you need to know about Locust
-
 .. sidebar:: About locust
 
     Locust is a scalable load testing framework written in Python
@@ -13,6 +11,8 @@ Locust Documentation
     * **Twitter**: `@locustio <https://twitter.com/locustio>`_
 
 
+Getting started
+---------------
 
 .. toctree ::
     :maxdepth: 4
@@ -21,31 +21,65 @@ Locust Documentation
     installation
     quickstart
 
+
+Writing Locust tests
+--------------------
+
 .. toctree ::
-    :maxdepth: 4
+    :maxdepth: 2
 
     writing-a-locustfile
 
-.. toctree ::
-    :maxdepth: 4
 
+Running your Locust tests
+-------------------------
+
+.. toctree ::
+    :maxdepth: 1
+
+    configuration
     running-locust-distributed
+    running-locust-docker
     running-locust-without-web-ui
+    increase-performance
+
+
+Other functionalities
+---------------------
 
 .. toctree ::
-    :maxdepth: 4
+    :maxdepth: 2
 
+    generating-custom-load-shape
+    running-locust-in-step-load-mode
     retrieving-stats
     testing-other-systems
-    api
     extending-locust
+    logging
+    use-as-lib
 
+
+API
+---
 .. toctree ::
     :maxdepth: 4
 
-    third-party-tools
+    api
+
+
+Further reading / knowledgebase
+-------------------------------
 
 .. toctree ::
-    :maxdepth: 4
+    :maxdepth: 1
+
+    further-reading
+
+
+Changelog
+---------
+
+.. toctree ::
+    :maxdepth: 2
 
     changelog

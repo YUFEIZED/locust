@@ -1,8 +1,14 @@
-FROM python:3.6.6-alpine3.8
+FROM python:3.8
 
-RUN apk --no-cache add g++ \ 
-      && pip install locustio pyzmq
+COPY . /build
+RUN cd /build && pip install . && rm -rf /build
 
-EXPOSE 8089 5557 5558
+EXPOSE 8089 5557
 
-ENTRYPOINT ["/usr/local/bin/locust"]
+RUN useradd --create-home locust
+USER locust
+WORKDIR /home/locust
+ENTRYPOINT ["locust"]
+
+# turn off python output buffering
+ENV PYTHONUNBUFFERED=1
