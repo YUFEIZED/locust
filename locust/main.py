@@ -362,8 +362,6 @@ def main():
             code = 2
         elif environment.process_exit_code is not None:
             code = environment.process_exit_code
-        elif len(runner.exceptions):
-            code = options.exit_code_on_error
         else:
             code = 0
 
